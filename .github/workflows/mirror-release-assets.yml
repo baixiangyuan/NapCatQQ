@@ -1,0 +1,38 @@
+name: Mirror Release Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source repo (owner/name)'
+        required: true
+        default: 'XingYunStar/NapCatQQ'
+      tags:
+        description: 'Space separated tags to mirror'
+        required: true
+        default: 'v4.18.42 v4.18.19 v4.17.23 v4.15.0'
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE: ${{ inputs.source }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          for tag in $TAGS; do
+            echo "::group::$tag"
+            dir="$RUNNER_TEMP/$tag"
+            mkdir -p "$dir"
+            gh release download "$tag" -R "$SOURCE" -D "$dir" --clobber || echo "download had failures"
+            du -sh "$dir"
+            ls -1 "$dir"
+            gh release upload "$tag" -R "$GITHUB_REPOSITORY" "$dir"/* --clobber
+            echo "::endgroup::"
+          done
