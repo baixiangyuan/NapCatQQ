@@ -25,14 +25,33 @@ jobs:
           SOURCE: ${{ inputs.source }}
           TAGS: ${{ inputs.tags }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          failed=0
           for tag in $TAGS; do
             echo "::group::$tag"
             dir="$RUNNER_TEMP/$tag"
             mkdir -p "$dir"
-            gh release download "$tag" -R "$SOURCE" -D "$dir" --clobber || echo "download had failures"
-            du -sh "$dir"
-            ls -1 "$dir"
-            gh release upload "$tag" -R "$GITHUB_REPOSITORY" "$dir"/* --clobber
+            gh api "repos/$SOURCE/releases/tags/$tag" --jq '.assets[].name' > "$dir/../names.txt"
+            while IFS= read -r name; do
+              [ -z "$name" ] && continue
+              if [ -s "$dir/$name" ]; then echo "cached: $name"; continue; fi
+              ok=0
+              for attempt in 1 2 3 4; do
+                if gh release download "$tag" -R "$SOURCE" --pattern "$name" --dir "$dir" --clobber; then ok=1; break; fi
+                echo "retry $attempt for $name"; sleep 10
+              done
+              if [ "$ok" != "1" ]; then echo "::warning::download failed: $name"; failed=1; fi
+            done < "$dir/../names.txt"
+            du -sh "$dir" || true
+            for f in "$dir"/*; do
+              [ -f "$f" ] || continue
+              up=0
+              for attempt in 1 2 3 4; do
+                if gh release upload "$tag" -R "$GITHUB_REPOSITORY" "$f" --clobber; then up=1; break; fi
+                echo "retry upload $attempt for $f"; sleep 10
+              done
+              if [ "$up" != "1" ]; then echo "::warning::upload failed: $f"; failed=1; fi
+            done
             echo "::endgroup::"
           done
+          if [ "$failed" != "0" ]; then echo "::error::some assets failed"; exit 1; fi
